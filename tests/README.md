@@ -14,10 +14,22 @@
 
 ## Targeted Tests
 
-- Upload Excel/CSV parser regression:
+- All UploadExcel parser regressions:
 
 ```bash
-npx jest tests/unit/components/UploadExcel.spec.js --runInBand
+npx jest tests/unit/components/UploadExcel.spec.js tests/unit/components/UploadExcel.csv-encoding.spec.js tests/unit/components/UploadExcel.date.spec.js --runInBand
+```
+
+- UploadExcel CSV encoding only:
+
+```bash
+npx jest tests/unit/components/UploadExcel.csv-encoding.spec.js --runInBand
+```
+
+- UploadExcel date parsing only:
+
+```bash
+npx jest tests/unit/components/UploadExcel.date.spec.js --runInBand
 ```
 
 - Utility tests:
@@ -25,6 +37,11 @@ npx jest tests/unit/components/UploadExcel.spec.js --runInBand
 ```bash
 npx jest tests/unit/utils --runInBand
 ```
+
+## UploadExcel Guides
+
+- CSV Chinese/non-UTF-8 upload fixes: [UPLOAD_EXCEL_CSV_ENCODING.md](UPLOAD_EXCEL_CSV_ENCODING.md)
+- Excel/CSV date parsing fixes: [UPLOAD_EXCEL_DATE_PARSING.md](UPLOAD_EXCEL_DATE_PARSING.md)
 
 ## When To Run Full Tests
 
@@ -36,11 +53,10 @@ Run `npm run test:ci` before handing off broad changes that include lint-sensiti
 
 - Bug fixes need a regression test that fails before the fix.
 - Upload parser changes need a component unit test with a mocked `FileReader`.
-- Encoding fixes should use byte arrays or fixtures checked into the repo, not user desktop paths.
 - Tests that assert non-ASCII text should prefer Unicode escapes for stable review on Windows terminals.
+- Keep UploadExcel parser test details in the focused guides above instead of expanding this overview.
 
 ## Common Failures
 
-- `TextDecoder` is missing in Jest/jsdom: import it from Node's `util` package and assign `global.TextDecoder`.
 - Element UI warnings in shallow component tests: stub components such as `el-button`.
-- CSV text parses into rows but headers are garbled: ensure CSV bytes are decoded to text before `XLSX.read(..., { type: 'string' })`.
+- For UploadExcel CSV encoding and date parsing failures, use the focused guides above.

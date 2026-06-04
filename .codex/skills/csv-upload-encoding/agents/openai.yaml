@@ -1,4 +1,4 @@
 interface:
-  display_name: "CSV Upload Encoding"
-  short_description: "Fix garbled CSV upload text safely"
-  default_prompt: "Use $csv-upload-encoding to fix garbled Chinese text when uploading CSV files."
+  display_name: "Spreadsheet Upload Parsing"
+  short_description: "Fix CSV encoding and Excel date imports"
+  default_prompt: "Use $csv-upload-encoding to fix spreadsheet upload parsing issues, including CSV Chinese mojibake and Excel date values."

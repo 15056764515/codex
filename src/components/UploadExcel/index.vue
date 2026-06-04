@@ -84,13 +84,19 @@ export default {
         const reader = new FileReader()
         reader.onload = e => {
           const data = e.target.result
-          const workbook = this.isCsv(rawFile)
-            ? XLSX.read(this.decodeCsvData(data), { type: 'string' })
-            : XLSX.read(data, { type: 'array' })
+          const isCsvFile = this.isCsv(rawFile)
+          const csvData = isCsvFile ? this.decodeCsvData(data) : null
+          const workbook = isCsvFile
+            ? XLSX.read(csvData, { type: 'string' })
+            : XLSX.read(data, { type: 'array', cellNF: true })
+          const rawWorkbook = isCsvFile
+            ? XLSX.read(csvData, { type: 'string', raw: true })
+            : null
           const firstSheetName = workbook.SheetNames[0]
           const worksheet = workbook.Sheets[firstSheetName]
+          const rawWorksheet = rawWorkbook ? rawWorkbook.Sheets[firstSheetName] : null
           const header = this.getHeaderRow(worksheet)
-          const results = XLSX.utils.sheet_to_json(worksheet)
+          const results = this.normalizeSheetData(worksheet, rawWorksheet, this.isDate1904(workbook))
           this.generateData({ header, results })
           this.loading = false
           resolve()
@@ -101,6 +107,165 @@ export default {
         }
         reader.readAsArrayBuffer(rawFile)
       })
+    },
+    normalizeSheetData(sheet, rawSheet, date1904) {
+      const results = XLSX.utils.sheet_to_json(sheet)
+      const headerMap = this.getJsonHeaderMap(sheet)
+
+      results.forEach(row => {
+        const rowIndex = row.__rowNum__
+
+        Object.keys(row).forEach(key => {
+          const columnIndex = headerMap[key]
+          if (columnIndex === undefined) return
+
+          const cellAddress = XLSX.utils.encode_cell({ c: columnIndex, r: rowIndex })
+          const cell = sheet[cellAddress]
+          const rawCell = rawSheet ? rawSheet[cellAddress] : null
+          row[key] = this.normalizeCellValue(row[key], cell, rawCell, date1904)
+        })
+      })
+
+      return results
+    },
+    normalizeCellValue(value, cell, rawCell, date1904) {
+      const rawDate = rawCell && this.normalizeDateString(rawCell.v)
+      if (rawDate) {
+        return rawDate
+      }
+
+      if (cell && this.isDateCell(cell)) {
+        return cell.t === 'd'
+          ? this.formatDateObject(cell.v)
+          : this.formatExcelDateNumber(cell.v, date1904, cell.z)
+      }
+
+      const stringDate = this.normalizeDateString(value)
+      if (stringDate) {
+        return stringDate
+      }
+
+      return value
+    },
+    normalizeDateString(value) {
+      if (typeof value !== 'string') {
+        return null
+      }
+
+      const dateMatch = value.match(/^\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?\s*$/)
+      const cnDateMatch = value.match(/^\s*(\d{4})\u5e74(\d{1,2})\u6708(\d{1,2})\u65e5?(?:\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?\s*$/)
+      const match = dateMatch || cnDateMatch
+
+      if (!match) {
+        return null
+      }
+
+      const parts = {
+        y: Number(match[1]),
+        m: Number(match[2]),
+        d: Number(match[3]),
+        H: Number(match[4] || 0),
+        M: Number(match[5] || 0),
+        S: Number(match[6] || 0)
+      }
+      const date = new Date(parts.y, parts.m - 1, parts.d, parts.H, parts.M, parts.S)
+
+      if (
+        date.getFullYear() !== parts.y ||
+        date.getMonth() + 1 !== parts.m ||
+        date.getDate() !== parts.d ||
+        date.getHours() !== parts.H ||
+        date.getMinutes() !== parts.M ||
+        date.getSeconds() !== parts.S
+      ) {
+        return null
+      }
+
+      return this.formatDateParts(parts, Boolean(match[4]))
+    },
+    isDateCell(cell) {
+      if (cell.t === 'd') {
+        return cell.v instanceof Date
+      }
+
+      return cell.t === 'n' && cell.z && XLSX.SSF.is_date(cell.z)
+    },
+    formatExcelDateNumber(value, date1904, format) {
+      const date = XLSX.SSF.parse_date_code(value, { date1904 })
+      if (!date) {
+        return value
+      }
+
+      if (!this.isDateTimeFormat(format)) {
+        date.H = 0
+        date.M = 0
+        date.S = 0
+      }
+
+      return this.formatDateParts(date, this.isDateTimeFormat(format))
+    },
+    isDateTimeFormat(format) {
+      if (typeof format !== 'string') {
+        return false
+      }
+
+      const hasElapsedTime = /\[[hms]+\]/i.test(format)
+      const cleanFormat = format
+        .replace(/"[^"]*"/g, '')
+        .replace(/\\./g, '')
+        .replace(/\[[^\]]+\]/g, '')
+
+      return hasElapsedTime || /(h+|s+|AM\/PM|A\/P)/i.test(cleanFormat)
+    },
+    formatDateObject(date) {
+      return this.formatDateParts({
+        y: date.getFullYear(),
+        m: date.getMonth() + 1,
+        d: date.getDate(),
+        H: date.getHours(),
+        M: date.getMinutes(),
+        S: date.getSeconds()
+      })
+    },
+    formatDateParts(date, forceTime) {
+      const dateText = [date.y, date.m, date.d].map(this.padDatePart).join('-')
+      const hasTime = forceTime || date.H || date.M || date.S
+
+      if (!hasTime) {
+        return dateText
+      }
+
+      return `${dateText} ${[date.H, date.M, date.S].map(this.padDatePart).join(':')}`
+    },
+    padDatePart(value) {
+      return String(value).padStart(2, '0')
+    },
+    getJsonHeaderMap(sheet) {
+      const headers = {}
+      const range = XLSX.utils.decode_range(sheet['!ref'])
+      const R = range.s.r
+      const jsonHeaders = []
+
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cell = sheet[XLSX.utils.encode_cell({ c: C, r: R })]
+        const value = cell == null ? '__EMPTY' : XLSX.utils.format_cell(cell)
+        let header = value
+        let counter = 0
+
+        for (let CC = 0; CC < jsonHeaders.length; ++CC) {
+          if (jsonHeaders[CC] === header) {
+            header = value + '_' + (++counter)
+          }
+        }
+
+        jsonHeaders[C] = header
+        headers[header] = C
+      }
+
+      return headers
+    },
+    isDate1904(workbook) {
+      return Boolean(workbook && workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904)
     },
     decodeCsvData(data) {
       if (typeof TextDecoder === 'undefined') {
